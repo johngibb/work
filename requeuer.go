@@ -11,8 +11,7 @@ type requeuer struct {
 	namespace string
 	pool      *redis.Pool
 
-	redisRequeueScript *redis.Script
-	redisRequeueArgs   []interface{}
+	requeueKey string
 
 	stopChan         chan struct{}
 	doneStoppingChan chan struct{}
@@ -21,22 +20,12 @@ type requeuer struct {
 	doneDrainingChan chan struct{}
 }
 
-func newRequeuer(namespace string, pool *redis.Pool, requeueKey string, jobNames []string) *requeuer {
-	args := make([]interface{}, 0, len(jobNames)+2+2)
-	args = append(args, requeueKey)              // KEY[1]
-	args = append(args, redisKeyDead(namespace)) // KEY[2]
-	for _, jobName := range jobNames {
-		args = append(args, redisKeyJobs(namespace, jobName)) // KEY[3, 4, ...]
-	}
-	args = append(args, redisKeyJobsPrefix(namespace)) // ARGV[1]
-	args = append(args, 0)                             // ARGV[2] -- NOTE: We're going to change this one on every call
-
+func newRequeuer(namespace string, pool *redis.Pool, requeueKey string) *requeuer {
 	return &requeuer{
 		namespace: namespace,
 		pool:      pool,
 
-		redisRequeueScript: redis.NewScript(len(jobNames)+2, redisLuaZremLpushCmd),
-		redisRequeueArgs:   args,
+		requeueKey: requeueKey,
 
 		stopChan:         make(chan struct{}),
 		doneStoppingChan: make(chan struct{}),
@@ -87,9 +76,25 @@ func (r *requeuer) process() bool {
 	conn := r.pool.Get()
 	defer conn.Close()
 
-	r.redisRequeueArgs[len(r.redisRequeueArgs)-1] = nowEpochSeconds()
+	key := redisKeyKnownJobs(r.namespace)
+	jobNames, err := redis.Strings(conn.Do("SMEMBERS", key))
+	if err != nil {
+		logError("requeuer.process", err)
+		return false
+	}
 
-	res, err := redis.String(r.redisRequeueScript.Do(conn, r.redisRequeueArgs...))
+	args := make([]interface{}, 0, len(jobNames)+2+2)
+	args = append(args, r.requeueKey)              // KEY[1]
+	args = append(args, redisKeyDead(r.namespace)) // KEY[2]
+	for _, jobName := range jobNames {
+		args = append(args, redisKeyJobs(r.namespace, jobName)) // KEY[3, 4, ...]
+	}
+	args = append(args, redisKeyJobsPrefix(r.namespace)) // ARGV[1]
+	args = append(args, nowEpochSeconds())               // ARGV[2]
+
+	script := redis.NewScript(2+len(jobNames), redisLuaZremLpushCmd) // TODO: fix key count
+
+	res, err := redis.String(script.Do(conn, args...))
 	if err == redis.ErrNil {
 		return false
 	} else if err != nil {

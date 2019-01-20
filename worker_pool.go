@@ -10,7 +10,10 @@ import (
 	"github.com/robfig/cron"
 )
 
-// WorkerPool represents a pool of workers. It forms the primary API of gocraft/work. WorkerPools provide the public API of gocraft/work. You can attach jobs and middlware to them. You can start and stop them. Based on their concurrency setting, they'll spin up N worker goroutines.
+// WorkerPool represents a pool of workers. It forms the primary API of
+// gocraft/work. WorkerPools provide the public API of gocraft/work. You can
+// attach jobs and middlware to them. You can start and stop them. Based on
+// their concurrency setting, they'll spin up N worker goroutines.
 type WorkerPool struct {
 	workerPoolID  string
 	concurrency   uint
@@ -253,8 +256,8 @@ func (wp *WorkerPool) startRequeuers() {
 	for k := range wp.jobTypes {
 		jobNames = append(jobNames, k)
 	}
-	wp.retrier = newRequeuer(wp.namespace, wp.pool, redisKeyRetry(wp.namespace), jobNames)
-	wp.scheduler = newRequeuer(wp.namespace, wp.pool, redisKeyScheduled(wp.namespace), jobNames)
+	wp.retrier = newRequeuer(wp.namespace, wp.pool, redisKeyRetry(wp.namespace))
+	wp.scheduler = newRequeuer(wp.namespace, wp.pool, redisKeyScheduled(wp.namespace))
 	wp.deadPoolReaper = newDeadPoolReaper(wp.namespace, wp.pool, jobNames)
 	wp.retrier.start()
 	wp.scheduler.start()
